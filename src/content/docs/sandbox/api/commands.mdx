@@ -87,7 +87,7 @@ for await (const event of parseSSEStream<ExecEvent>(stream)) {
 Start a long-running background process.
 
 ```ts
-const process = await sandbox.startProcess(command: string, options?: ProcessOptions): Promise<ProcessInfo>
+const process = await sandbox.startProcess(command: string, options?: ProcessOptions): Promise<Process>
 ```
 
 **Parameters**:
@@ -96,7 +96,7 @@ const process = await sandbox.startProcess(command: string, options?: ProcessOpt
   - `cwd` - Working directory
   - `env` - Environment variables
 
-**Returns**: `Promise<ProcessInfo>` with `id`, `pid`, `command`, `status`
+**Returns**: `Promise<Process>` with `id`, `pid`, `command`, `status`, and methods for process management
 
 <TypeScriptExample>
 ```
@@ -108,6 +108,143 @@ const app = await sandbox.startProcess('node app.js', {
   cwd: '/workspace/my-app',
   env: { NODE_ENV: 'production', PORT: '3000' }
 });
+```
+</TypeScriptExample>
+
+## Process methods
+
+The `Process` object returned by `startProcess()` provides methods for managing the process lifecycle and checking readiness.
+
+### `process.waitForLog()`
+
+Wait for a log pattern to appear in process output. Useful for detecting when a service is ready.
+
+```ts
+const result = await process.waitForLog(pattern: string | RegExp, timeout?: number): Promise<WaitForLogResult>
+```
+
+**Parameters**:
+- `pattern` - String to match or RegExp pattern
+- `timeout` (optional) - Maximum wait time in milliseconds
+
+**Returns**: `Promise<WaitForLogResult>` with `line` (matching line) and `match` (regex captures if using RegExp)
+
+**Throws**:
+- `ProcessReadyTimeoutError` - Pattern not found within timeout
+- `ProcessExitedBeforeReadyError` - Process exited before pattern appeared
+
+<TypeScriptExample>
+```
+// String pattern matching
+const server = await sandbox.startProcess('npm run dev');
+await server.waitForLog('Server listening on port 3000');
+console.log('Server is ready!');
+
+// Regex pattern with timeout
+const result = await server.waitForLog(/listening on port (\d+)/, 30000);
+console.log('Port:', result.match[1]); // Extract port from regex capture
+
+// Error handling
+import { ProcessReadyTimeoutError } from '@cloudflare/sandbox';
+
+try {
+  await server.waitForLog('Ready', 5000);
+} catch (error) {
+  if (error instanceof ProcessReadyTimeoutError) {
+    console.error('Server did not start within 5 seconds');
+    const logs = await server.getLogs();
+    console.error('Logs:', logs.stdout);
+  }
+}
+```
+</TypeScriptExample>
+
+### `process.waitForPort()`
+
+Wait for a port to accept TCP connections. Useful for ensuring network services are ready.
+
+```ts
+await process.waitForPort(port: number, timeout?: number): Promise<void>
+```
+
+**Parameters**:
+- `port` - Port number to check
+- `timeout` (optional) - Maximum wait time in milliseconds
+
+**Throws**:
+- `ProcessReadyTimeoutError` - Port did not become ready within timeout
+- `ProcessExitedBeforeReadyError` - Process exited before port opened
+
+<TypeScriptExample>
+```
+const server = await sandbox.startProcess('node server.js');
+
+// Wait for port to be ready
+await server.waitForPort(8080, 10000);
+console.log('Server is accepting connections on port 8080');
+
+// Make requests to the service
+const response = await fetch('http://localhost:8080/health');
+```
+</TypeScriptExample>
+
+### `process.getLogs()`
+
+Get accumulated logs from the process.
+
+```ts
+const logs = await process.getLogs(): Promise<{ stdout: string; stderr: string }>
+```
+
+**Returns**: `Promise` with `stdout` and `stderr` strings
+
+<TypeScriptExample>
+```
+const server = await sandbox.startProcess('node server.js');
+const logs = await server.getLogs();
+console.log('Output:', logs.stdout);
+console.log('Errors:', logs.stderr);
+```
+</TypeScriptExample>
+
+### `process.getStatus()`
+
+Get refreshed process status.
+
+```ts
+const status = await process.getStatus(): Promise<ProcessStatus>
+```
+
+**Returns**: `Promise<ProcessStatus>` - One of: `'starting'`, `'running'`, `'completed'`, `'failed'`, `'killed'`, `'error'`
+
+<TypeScriptExample>
+```
+const server = await sandbox.startProcess('node server.js');
+const status = await server.getStatus();
+
+if (status === 'running') {
+  console.log('Process is still running');
+}
+```
+</TypeScriptExample>
+
+### `process.kill()`
+
+Terminate the process.
+
+```ts
+await process.kill(signal?: string): Promise<void>
+```
+
+**Parameters**:
+- `signal` (optional) - Signal to send (default: `'SIGTERM'`)
+
+<TypeScriptExample>
+```
+const server = await sandbox.startProcess('node server.js');
+await server.kill(); // Graceful shutdown
+// or
+await server.kill('SIGKILL'); // Force kill
 ```
 </TypeScriptExample>
 
